@@ -1,51 +1,79 @@
-import requests
-from bs4 import BeautifulSoup
-import pandas as pd
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 import time
+import csv
 
-all_data = []
+# TASK 3: Scrape Stock Overview Pages
+# Source: TradingView – Stock Overview (Example: https://www.tradingview.com/symbols/NASDAQ-AAPL/)
 
-base_url = "https://www.tradingview.com/markets/stocks-usa/market-movers-all-stocks/"
-headers = {"User-Agent": "Mozilla/5.0"}
+# ================================
+# CONFIGURATION
+# ================================
+options = webdriver.ChromeOptions()
+options.add_argument('--disable-gpu')
+options.add_argument('--no-sandbox')
+# Uncomment below if you want headless (no browser UI)
+# options.add_argument('--headless')
 
-# Manually set total_pages based on total stocks (4574) and estimated stocks per page (100)
-total_pages = 46  # You can adjust this number based on actual site inspection
+driver = webdriver.Chrome(options=options)
+wait = WebDriverWait(driver, 15)
 
-for page_num in range(1, total_pages + 1):
-    print(f"Scraping page {page_num} of {total_pages}...")
-    url = f"{base_url}?page={page_num}"
-    response = requests.get(url, headers=headers)
-    
-    if response.status_code != 200:
-        print(f"Failed to retrieve page {page_num}, status code: {response.status_code}")
-        continue  # Skip this page and move to the next one
-    
-    soup = BeautifulSoup(response.text, 'html.parser')
-    
-    # Parse stock data - adjust selectors based on actual HTML structure
-    rows = soup.select(".tv-data-table__row")
-    if not rows:
-        print(f"No data rows found on page {page_num}")
-    
-    for row in rows:
-        try:
-            symbol = row.select_one(".tv-screener__symbol").text.strip()
-            company = row.select_one(".tv-screener__description").text.strip()
-            price = row.select_one(".tv-screener__last").text.strip()
-            change = row.select_one(".tv-screener__change").text.strip()
-            data = {
-                "Symbol": symbol,
-                "Company": company,
-                "Price": price,
-                "Change": change
-            }
-            all_data.append(data)
-        except Exception as e:
-            print(f"Error parsing row on page {page_num}: {e}")
-    
-    time.sleep(1)  # Delay to respect rate limits
+# ================================
+# READ SYMBOLS FROM CSV
+# ================================
+symbols = []
+with open("tradingview_all_stocks.csv", 'r', encoding='utf-8') as f:
+    reader = csv.reader(f)
+    next(reader)  # Skip header
+    for row in reader:
+        symbols.append(row[0])
 
-# Save to CSV
-df = pd.DataFrame(all_data)
-df.to_csv("us_stock_symbols.csv", index=False)
-print("Scraping completed. Data saved to us_stock_symbols.csv.")
+print(f"🔎 Total symbols to scrape: {len(symbols)}")
+
+# ================================
+# SCRAPE DATA
+# ================================
+data = []
+for idx, symbol in enumerate(symbols, 1):
+    url = f"https://www.tradingview.com/symbols/{symbol}/"
+    driver.get(url)
+    
+    # Optional: Wait for the page to load completely
+    time.sleep(3)
+    
+    try:
+        # Wait for the company header to appear (adjust class name if needed)
+        title_element = wait.until(EC.presence_of_element_located(
+            (By.CLASS_NAME, "tv-symbol-header__first-line")
+        ))
+        title = title_element.text.strip()
+        
+        # Get company description (adjust class name if needed)
+        description_element = driver.find_element(
+            By.CLASS_NAME, "tv-symbol-profile__description"
+        )
+        description = description_element.text.strip()
+        
+        # You can extract additional data here if needed, e.g., industry, sector, market cap
+        
+        # Add to data list
+        data.append([symbol, title, description])
+        print(f"✅ {idx}/{len(symbols)}: Fetched data for {symbol}")
+    
+    except Exception as e:
+        print(f"❌ {idx}/{len(symbols)}: Failed for {symbol} — {e}")
+        data.append([symbol, "N/A", "N/A"])
+
+# ================================
+# SAVE SCRAPED DATA TO CSV
+# ================================
+output_file = "tradingview_symbol_details.csv"
+with open(output_file, 'w', newline='', encoding='utf-8') as f:
+    writer = csv.writer(f)
+    writer.writerow(['Symbol', 'Title', 'Description'])  # CSV header
+    writer.writerows(data)
+
+print(f"\n✅ Done! Saved detailed data for {len(symbols)} symbols to '{output_file}'.")
+driver.quit()
